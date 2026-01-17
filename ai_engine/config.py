@@ -1,33 +1,34 @@
-import os
+import cv2
 
-# --- PATH SETTINGS ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "yolov8n.pt")  # Make sure model yahan ho
+# --- SYSTEM CONFIG ---
+FPS_LIMIT = 30
+MODEL_PATH = "models/yolov8n.pt"
 
-# --- CAMERA SETTINGS ---
-# Agar webcam use kar rahe hain toh 0, video file hai toh path dein
-VIDEO_SOURCE = 0  
+# --- CAMERA ---
+# 0 for Webcam, or path to video file. 
+# In a real 4-camera setup, you would have [0, 1, 2, 3]
+VIDEO_SOURCE = 0 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
-FPS_LIMIT = 5  # CPU bachane ke liye hum sirf 5 frames/sec process karenge
 
-# --- TRAFFIC ZONES (Coordinates) ---
-# Yeh screen par wo box hain jahan gaadiyan count hongi.
-# [x1, y1, x2, y2]
-ZONES = {
-    'north': [100, 50, 300, 250],
-    'east':  [350, 50, 550, 250],
-    'south': [100, 300, 300, 500],
-    'west':  [350, 300, 550, 500]
-}
+# --- SIMULATION VIDEOS (Fallback) ---
+# Create an 'assets' folder and put these videos there
+SIM_VIDEOS = [
+    "assets/traffic_day.mp4", 
+    "assets/traffic_night.mp4", 
+    "assets/traffic_rain.mp4"
+]
 
-# --- SIGNAL TIMINGS (Seconds) ---
-DEFAULT_GREEN_TIME = 30
-MIN_GREEN_TIME = 5
+# --- TRAFFIC LOGIC ---
+DEFAULT_GREEN_TIME = 20
+MIN_GREEN_TIME = 5 # Burst mode time
 YELLOW_TIME = 3
-EMERGENCY_TIME = 60
 
-# --- THRESHOLDS ---
-# Kitni gaadiyan hone par 'Heavy Traffic' mana jayega
-HEAVY_TRAFFIC_THRESHOLD = 10
-MAX_WAIT_TIME = 60  # Seconds
+# --- DETECTION ZONES (x1, y1, x2, y2) ---
+# These zones map to the 4 directions on the single feed (for demo/sim)
+ZONES = {
+    'north': [100, 100, 300, 300],
+    'east':  [340, 100, 540, 300],
+    'south': [100, 340, 300, 540],
+    'west':  [340, 340, 540, 540]
+}

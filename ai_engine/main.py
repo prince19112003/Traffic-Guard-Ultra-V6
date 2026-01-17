@@ -6,31 +6,36 @@ from detector import VehicleDetector
 from controller import TrafficController
 import config
 
-# --- COMMAND LISTENER THREAD ---
-def listen_for_commands(controller):
-    """ Node.js se commands padhne ke liye alag thread """
+def listen_for_commands(controller, detector):
     while True:
         try:
             line = sys.stdin.readline()
             if not line: break
             
-            # Command Parse karo
             data = json.loads(line.strip())
-            if 'cmd' in data:
-                controller.handle_command(data['cmd'])
-        except:
+            cmd = data.get('cmd')
+            
+            if cmd:
+                if cmd == 'TOGGLE_SIMULATION':
+                    # Toggle logic: Check current state in detector or just cycle
+                    if detector.mode == 'CAMERA':
+                        detector.switch_source('SIMULATION', 0) # Default sim video
+                    else:
+                        detector.switch_source('CAMERA')
+                
+                # Logic Commands
+                else:
+                    controller.handle_command(cmd)
+        except Exception:
             pass
 
 def main():
-    # Setup
     detector = VehicleDetector()
     controller = TrafficController()
     
-    # 1. Listener Start karo (Background mein)
-    cmd_thread = threading.Thread(target=listen_for_commands, args=(controller,), daemon=True)
+    cmd_thread = threading.Thread(target=listen_for_commands, args=(controller, detector), daemon=True)
     cmd_thread.start()
 
-    # 2. Main Loop
     while True:
         try:
             start_time = time.time()
@@ -40,6 +45,21 @@ def main():
             
             # B. Logic
             traffic_state = controller.update(data['counts'])
+            
+            # --- ECO MODE: CPU SAVER ---
+            # Total vehicles count karo
+            total_vehicles = sum(data['counts'].values())
+            is_idle = total_vehicles < 10
+            
+            # Agar Eco Mode ON hai aur Traffic kam hai
+            sleep_time = 0
+            if traffic_state['eco_mode'] and is_idle:
+                 # Low Power Mode: Process at 2 FPS instead of 30 FPS
+                 sleep_time = 0.5 
+            else:
+                 # Normal High Performance Mode
+                 process_time = time.time() - start_time
+                 sleep_time = max(0, (1.0/config.FPS_LIMIT) - process_time)
             
             # C. Send Data
             payload = {
@@ -52,9 +72,7 @@ def main():
             print(json.dumps(payload))
             sys.stdout.flush()
 
-            # D. FPS Control
-            process_time = time.time() - start_time
-            time.sleep(max(0, (1.0/config.FPS_LIMIT) - process_time))
+            time.sleep(sleep_time)
 
         except KeyboardInterrupt:
             break
