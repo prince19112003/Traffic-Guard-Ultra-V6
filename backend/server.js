@@ -1,129 +1,92 @@
-import express from 'express';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { SerialPort } from 'serialport';
-import { ReadlineParser } from '@serialport/parser-readline';
-import { spawn } from 'child_process';
-import { createInterface } from 'readline';
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const { spawn } = require('child_process');
+const path = require('path');
+const { SerialPort } = require('serialport');
+const { ReadlineParser } = require('@serialport/parser-readline');
 
-// --- CONFIGURATION ---
-const PORT = 5000;
-const SERIAL_PORT = 'COM3'; // Check Arduino Port
-const BAUD_RATE = 9600;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// --- 1. SETUP SERVER ---
 const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
+const server = http.createServer(app);
+const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-// --- 2. SERVE FRONTEND ---
-const frontendPath = path.join(__dirname, '../frontend/dist');
-app.use(express.static(frontendPath));
-app.get('*', (req, res) => res.sendFile(path.join(frontendPath, 'index.html')));
+// --- ARDUINO CONFIG ---
+// Apna COM port check karke yahan dalein (Windows: COM3, Mac/Linux: /dev/ttyUSB0)
+const ARDUINO_PORT = 'COM3';
+const BAUD_RATE = 9600;
 
-// --- 3. ARDUINO CONNECTION ---
 let arduino = null;
-try {
-  arduino = new SerialPort({ path: SERIAL_PORT, baudRate: BAUD_RATE });
-  const parser = arduino.pipe(new ReadlineParser({ delimiter: '\n' }));
-  console.log(`✅ Arduino Connected on ${SERIAL_PORT}`);
 
-  parser.on('data', data => console.log('🤖 Arduino:', data.trim()));
-  arduino.on('error', err => {
-    console.log('⚠️ Arduino Error:', err.message);
-    arduino = null;
-  });
+try {
+  arduino = new SerialPort({ path: ARDUINO_PORT, baudRate: BAUD_RATE });
+  const parser = arduino.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+  arduino.on('open', () =>
+    console.log('✅ Arduino Connected on ' + ARDUINO_PORT)
+  );
+  parser.on('data', data => console.log('Arduino says:', data));
+  arduino.on('error', err => console.log('⚠️ Arduino Error:', err.message));
 } catch (err) {
-  console.log('⚠️ Arduino Not Found (Simulation Mode)');
+  console.log('⚠️ Arduino not found (Running in Software Mode)');
 }
 
-const sendToArduino = cmd => {
-  if (arduino && arduino.isOpen) {
-    arduino.write(cmd);
-  }
-};
+// --- PYTHON AI ENGINE ---
+const pythonProcess = spawn('python', [
+  '-u', // Unbuffered output
+  path.join(__dirname, '../ai_engine/main.py'),
+]);
 
-// --- 4. AI ENGINE (PYTHON) ---
-let pythonProcess = null;
+let buffer = '';
 
-const startPythonEngine = () => {
-  const scriptPath = path.join(__dirname, '../ai_engine/main.py');
-  console.log(`🚀 Starting AI Engine: ${scriptPath}`);
+pythonProcess.stdout.on('data', data => {
+  buffer += data.toString();
+  const lines = buffer.split('\n');
+  buffer = lines.pop(); // Keep incomplete line
 
-  // Spawn Python
-  pythonProcess = spawn('python', ['-u', scriptPath]);
-
-  // Use Readline to read data line-by-line
-  const rl = createInterface({ input: pythonProcess.stdout });
-
-  rl.on('line', line => {
+  for (const line of lines) {
+    if (!line.trim()) continue;
     try {
-      const trafficData = JSON.parse(line.trim());
+      const jsonData = JSON.parse(line);
 
-      // Frontend ko Data bhejo
-      io.emit('traffic-data', trafficData);
+      // 1. Send to Frontend
+      io.emit('traffic-data', jsonData);
 
-      // Arduino Logic
-      if (trafficData.logic && trafficData.logic.active_dir) {
-        const cmdMap = { north: 'N', east: 'E', south: 'S', west: 'W' };
-        sendToArduino(cmdMap[trafficData.logic.active_dir]);
+      // 2. Send to Arduino
+      if (arduino && arduino.isOpen && jsonData.logic) {
+        const { active_dir, state, mode } = jsonData.logic;
+        // Format: "north:GREEN\n" or "EMERGENCY\n"
+        let cmd = '';
+
+        if (mode === 'EMERGENCY') {
+          cmd = 'EMERGENCY\n';
+        } else {
+          cmd = `${active_dir}:${state}\n`;
+        }
+
+        arduino.write(cmd);
       }
     } catch (e) {
-      // Ignore incomplete JSON
+      // Ignore JSON parse errors from raw logs
     }
-  });
-
-  // Handle Errors
-  pythonProcess.stderr.on('data', data => {
-    console.error(`🐍 Python Log: ${data}`);
-  });
-
-  pythonProcess.on('close', code => {
-    console.log(`Python process exited with code ${code}`);
-  });
-};
-
-startPythonEngine();
-
-// --- 5. SOCKET COMMUNICATION ---
-io.on('connection', socket => {
-  console.log('👤 User Connected');
-
-  // Send Welcome Packet
-  socket.emit('traffic-data', {
-    counts: { north: 0, east: 0, south: 0, west: 0 },
-    logic: {
-      state: 'BOOTING',
-      active_dir: null,
-      timer: 0,
-      mode: 'AUTO',
-      signal_map: {},
-    },
-    env: { is_night: false, weather_mode: 'CLEAR' },
-    feeds: {},
-    analytics: { car: 0, bike: 0, bus: 0, truck: 0 },
-  });
-
-  // ✅ HANDLER: Frontend se Button Click aaya
-  socket.on('control', action => {
-    console.log('🎛️ Manual Action:', action);
-
-    // Python ko forward karo
-    if (pythonProcess && pythonProcess.stdin) {
-      const command = { cmd: action };
-      pythonProcess.stdin.write(JSON.stringify(command) + '\n');
-    }
-  });
-}); // ✅ Closing bracket for io.on (Yeh miss tha aapke code mein)
-
-// --- START ---
-httpServer.listen(PORT, () => {
-  console.log(`🚦 SERVER RUNNING at http://localhost:${PORT}`);
+  }
 });
+
+pythonProcess.stderr.on('data', data => {
+  console.error(`Python Error: ${data}`);
+});
+
+// --- FRONTEND COMMANDS ---
+io.on('connection', socket => {
+  console.log('UI Connected:', socket.id);
+
+  socket.on('control', cmd => {
+    // Send command to Python
+    const cmdObj = { cmd: cmd };
+    pythonProcess.stdin.write(JSON.stringify(cmdObj) + '\n');
+  });
+});
+
+const PORT = 5000;
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

@@ -1,0 +1,24 @@
+Connection Guide:
+Hardware:
+
+Arduino Uno/Mega lein.
+
+Pins 2, 3, 4: North Lane (Red, Yellow, Green LEDs/Relays).
+
+Pins 5, 6, 7: East Lane.
+
+Pins 8, 9, 10: South Lane.
+
+Pins 11, 12, 13: West Lane.
+
+Sabka GND Arduino ke GND se connect karein.
+
+Running:
+
+Arduino ko USB se connect karein.
+
+Device Manager (Windows) mein COM Port check karein (e.g., COM5).
+
+backend/server.js file mein line 18 par const ARDUINO_PORT = 'COM3'; ko apne port se badal dein (e.g., 'COM5').
+
+Backend restart karein: node backend/server.js.
